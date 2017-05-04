@@ -5,6 +5,7 @@
  */
 
 import Foundation
+import Files
 
 // MARK: - Error
 
@@ -23,12 +24,12 @@ extension CreateError: PrintableError {
         }
     }
 
-    public var hint: String? {
+    public var hints: [String] {
         switch self {
         case .missingName:
-            return "Pass the name of a script file to create (for example 'marathon create myScript')"
+            return ["Pass the name of a script file to create (for example 'marathon create myScript')"]
         case .failedToCreateFile:
-            return "Make sure you have write permissions to the current folder"
+            return ["Make sure you have write permissions to the current folder"]
         }
     }
 }
@@ -38,21 +39,37 @@ extension CreateError: PrintableError {
 internal final class CreateTask: Task, Executable {
     private typealias Error = CreateError
 
-    func execute() throws -> String {
-        guard let name = firstArgumentAsScriptPath else {
+    func execute() throws {
+        guard let path = firstArgumentAsScriptPath else {
             throw Error.missingName
         }
 
-        let script = arguments.element(at: 1) ?? "import Foundation\n\n"
-        let file = try perform(folder.createFile(named: name, contents: script.data(using: .utf8)!),
-                               orThrow: Error.failedToCreateFile(name))
-
-        print("🐣  Created script \(name)")
-
-        if !argumentsContainNoOpenFlag {
-            try scriptManager.script(at: file.path).edit(arguments: arguments, open: true)
+        guard let data = makeScriptContent().data(using: .utf8) else {
+            throw Error.failedToCreateFile(path)
         }
 
-        return ""
+        let file = try perform(FileSystem().createFile(at: path, contents: data),
+                               orThrow: Error.failedToCreateFile(path))
+
+        printer.output("🐣  Created script at \(path)")
+
+        if !argumentsContainNoOpenFlag {
+            let script = try scriptManager.script(at: file.path)
+            try script.edit(arguments: arguments, open: true)
+        }
+    }
+
+    private func makeScriptContent() -> String {
+        let defaultContent = "import Foundation\n\n"
+
+        guard let argument = arguments.element(at: 1) else {
+            return defaultContent
+        }
+
+        guard !argument.hasPrefix("-") else {
+            return defaultContent
+        }
+
+        return argument
     }
 }

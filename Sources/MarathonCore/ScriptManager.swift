@@ -6,13 +6,16 @@
 
 import Foundation
 import Files
+import Require
 
 // MARK: - Error
 
 public enum ScriptManagerError {
     case scriptNotFound(String)
     case failedToCreatePackageFile(Folder)
+    case failedToAddDependencyScript(String)
     case failedToRemoveScriptFolder(Folder)
+    case failedToDownloadScript(URL)
 }
 
 extension ScriptManagerError: PrintableError {
@@ -22,18 +25,26 @@ extension ScriptManagerError: PrintableError {
             return "Could not find a Swift script at '\(path)'"
         case .failedToCreatePackageFile(_):
             return "Failed to create a Package.swift file for the script"
+        case .failedToAddDependencyScript(let path):
+            return "Failed to add the dependency script at '\(path)'"
         case .failedToRemoveScriptFolder(_):
             return "Failed to remove script folder"
+        case .failedToDownloadScript(let url):
+            return "Failed to download script from '\(url.absoluteString)'"
         }
     }
 
-    public var hint: String? {
+    public var hints: [String] {
         switch self {
         case .scriptNotFound(_):
-            return "Please check that the path is valid and try again"
+            return ["Please check that the path is valid and try again"]
         case .failedToCreatePackageFile(let folder),
              .failedToRemoveScriptFolder(let folder):
-            return "Make sure you have write permissions to the folder '\(folder.path)'"
+            return ["Make sure you have write permissions to the folder '\(folder.path)'"]
+        case .failedToAddDependencyScript(_):
+            return ["Make sure that the file exists and is readable"]
+        case .failedToDownloadScript(_):
+            return ["Make sure that the URL is reachable, and that it contains a valid Swift script"]
         }
     }
 }
@@ -45,37 +56,63 @@ internal final class ScriptManager {
 
     var managedScriptPaths: [String] { return makeManagedScriptPathList() }
 
-    private let folder: Folder
+    private let cacheFolder: Folder
+    private let temporaryFolder: Folder
+    private lazy var temporaryScriptFiles = [File]()
     private let packageManager: PackageManager
+    private let printer: Printer
 
-    // MARK: - Init
+    // MARK: - Lifecycle
 
-    init(folder: Folder, packageManager: PackageManager) {
-        self.folder = folder
+    init(folder: Folder, packageManager: PackageManager, printer: Printer) throws {
+        self.cacheFolder = try folder.createSubfolderIfNeeded(withName: "Cache")
+        self.temporaryFolder = try folder.createSubfolderIfNeeded(withName: "Temp")
         self.packageManager = packageManager
+        self.printer = printer
+    }
+
+    deinit {
+        for file in temporaryScriptFiles {
+            try? removeDataForScript(at: file.path)
+            try? file.parent?.delete()
+        }
     }
 
     // MARK: - API
 
     func script(at path: String) throws -> Script {
         let file = try perform(File(path: path), orThrow: Error.scriptNotFound(path))
-        let identifier = scriptIdentifier(from: file.path)
-        let name = identifier.components(separatedBy: "-").last!.capitalized
-        let folder = try createFolderIfNeededForScript(withIdentifier: identifier, file: file)
-        let script = Script(name: name, folder: folder)
+        return try script(from: file)
+    }
 
-        if let marathonFile = script.marathonFile {
-            try packageManager.addPackages(fromMarathonFile: marathonFile)
-        }
-
+    func downloadScript(from url: URL) throws -> Script {
         do {
-            let packageFile = try folder.createFile(named: "Package.swift")
-            try packageFile.write(string: packageManager.makePackageDescription(for: script))
-        } catch {
-            throw Error.failedToCreatePackageFile(folder)
-        }
+            let url = url.transformIfNeeded()
 
-        return script
+            printer.reportProgress("Downloading script...")
+            let data = try Data(contentsOf: url)
+
+            printer.reportProgress("Saving script...")
+            let identifier = scriptIdentifier(from: url.absoluteString)
+            let folder = try temporaryFolder.createSubfolderIfNeeded(withName: identifier)
+            let fileName = scriptName(from: identifier) + ".swift"
+            let file = try folder.createFile(named: fileName, contents: data)
+            temporaryScriptFiles.append(file)
+
+            printer.reportProgress("Resolving Marathonfile...")
+            if let parentURL = url.parent {
+                let marathonFileURL = URL(string: parentURL.absoluteString + "Marathonfile").require()
+
+                if let marathonFileData = try? Data(contentsOf: marathonFileURL) {
+                    printer.reportProgress("Saving Marathonfile...")
+                    try folder.createFile(named: "Marathonfile", contents: marathonFileData)
+                }
+            }
+
+            return try script(from: file)
+        } catch {
+            throw Error.failedToDownloadScript(url)
+        }
     }
 
     func removeDataForScript(at path: String) throws {
@@ -88,34 +125,80 @@ internal final class ScriptManager {
         try perform(folder.delete(), orThrow: Error.failedToRemoveScriptFolder(folder))
     }
 
+    func removeAllScriptData() throws {
+        for path in managedScriptPaths {
+            try removeDataForScript(at: path)
+        }
+    }
+
     // MARK: - Private
 
+    private func script(from file: File) throws -> Script {
+        let identifier = scriptIdentifier(from: file.path)
+        let name = scriptName(from: identifier)
+        let folder = try createFolderIfNeededForScript(withIdentifier: identifier, file: file)
+        let script = Script(name: name, folder: folder, printer: printer)
+
+        if let marathonFile = try script.resolveMarathonFile() {
+            try packageManager.addPackages(fromMarathonFile: marathonFile)
+            try addDependencyScripts(fromMarathonFile: marathonFile, toFolder: folder)
+        }
+
+        do {
+            let packageFile = try folder.createFile(named: "Package.swift")
+            try packageFile.write(string: packageManager.makePackageDescription(for: script))
+        } catch {
+            throw Error.failedToCreatePackageFile(folder)
+        }
+
+        return script
+    }
+
     private func scriptIdentifier(from path: String) -> String {
-        let pathExcludingExtension = path.components(separatedBy: ".swift").first!
+        let pathExcludingExtension = path.components(separatedBy: ".swift").first.require()
         return pathExcludingExtension.replacingOccurrences(of: "/", with: "-")
+                                     .replacingOccurrences(of: " ", with: "-")
+    }
+
+    private func scriptName(from identifier: String) -> String {
+        return identifier.components(separatedBy: "-").last.require().capitalized
     }
 
     private func createFolderIfNeededForScript(withIdentifier identifier: String, file: File) throws -> Folder {
-        let scriptFolder = try folder.createSubfolderIfNeeded(withName: identifier)
+        let scriptFolder = try cacheFolder.createSubfolderIfNeeded(withName: identifier)
         try packageManager.symlinkPackages(to: scriptFolder)
 
         if (try? scriptFolder.file(named: "OriginalFile")) == nil {
-            try scriptFolder.createSymlink(to: file.path, at: "OriginalFile")
+            try scriptFolder.createSymlink(to: file.path, at: "OriginalFile", printer: printer)
         }
 
         let sourcesFolder = try scriptFolder.createSubfolderIfNeeded(withName: "Sources")
+        try sourcesFolder.empty()
         try sourcesFolder.createFile(named: "main.swift", contents: file.read())
 
         return scriptFolder
     }
 
     private func folderForScript(withIdentifier identifier: String) -> Folder? {
-        return try? folder.subfolder(named: identifier)
+        return try? cacheFolder.subfolder(named: identifier)
+    }
+
+    private func addDependencyScripts(fromMarathonFile file: MarathonFile, toFolder folder: Folder) throws {
+        for url in file.scriptURLs {
+            do {
+                let script = try File(path: url.absoluteString)
+                let sourcesFolder = try folder.subfolder(named: "Sources")
+                let copy = try sourcesFolder.createFile(named: script.name)
+                try copy.write(data: script.read())
+            } catch {
+                throw Error.failedToAddDependencyScript(url.absoluteString)
+            }
+        }
     }
 
     private func makeManagedScriptPathList() -> [String] {
-        return folder.subfolders.flatMap { scriptFolder in
-            guard let path = try? scriptFolder.moveToAndPerform(command: "readlink OriginalFile") else {
+        return cacheFolder.subfolders.flatMap { scriptFolder in
+            guard let path = try? scriptFolder.moveToAndPerform(command: "readlink OriginalFile", printer: printer) else {
                 return nil
             }
 

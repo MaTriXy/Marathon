@@ -7,11 +7,12 @@
 import Foundation
 
 internal final class ListTask: Task, Executable {
-    func execute() throws -> String {
+    func execute() throws {
         let packages = packageManager.addedPackages
         let scriptPaths = scriptManager.managedScriptPaths
 
         var output = ""
+        var listIsEmpty = true
 
         if !packages.isEmpty {
             let title = "📦  Packages"
@@ -22,6 +23,7 @@ internal final class ListTask: Task, Executable {
             }
 
             output.append("\n")
+            listIsEmpty = false
         }
 
         if !scriptPaths.isEmpty {
@@ -33,10 +35,15 @@ internal final class ListTask: Task, Executable {
             }
 
             output.append("\n")
+            listIsEmpty = false
         }
 
-        output.append("👉  To remove either a package or the cached data for a script, use 'marathon remove'")
+        if listIsEmpty {
+            output.append("ℹ️  No packages or script data has been added to Marathon yet")
+        } else {
+            output.append("👉  To remove either a package or the cached data for a script, use 'marathon remove'")
+        }
 
-        return output
+        printer.output(output)
     }
 }

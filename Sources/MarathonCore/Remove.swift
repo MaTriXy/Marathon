@@ -20,12 +20,12 @@ extension RemoveError: PrintableError {
         }
     }
 
-    public var hint: String? {
+    public var hints: [String] {
         switch self {
         case .missingIdentifier:
-            return "When using 'remove', pass either:\n" +
+            return ["When using 'remove', pass either:\n" +
                    "- The name of a package to remove\n" +
-                   "- The path to a script to remove cache data for (including '.swift')"
+                   "- The path to a script to remove cache data for (including '.swift')"]
         }
     }
 }
@@ -35,17 +35,33 @@ extension RemoveError: PrintableError {
 internal final class RemoveTask: Task, Executable {
     private typealias Error = RemoveError
 
-    func execute() throws -> String {
+    func execute() throws {
+        if arguments.contains("--all-script-data") || arguments.contains("--all-packages") {
+            var deletedObjects: [String] = []
+
+            if arguments.contains("--all-script-data") {
+                try scriptManager.removeAllScriptData()
+                deletedObjects.append("all script data")
+            }
+
+            if arguments.contains("--all-packages") {
+                try packageManager.removeAllPackages()
+                deletedObjects.append("all packages")
+            }
+
+            return printer.output("🗑  Removed \(deletedObjects.joined(separator: " and "))")
+        }
+
         guard let identifier = arguments.first else {
             throw Error.missingIdentifier
         }
 
         if identifier.hasSuffix(".swift") {
             try scriptManager.removeDataForScript(at: identifier)
-            return "🗑  Removed cache data for script '\(identifier)'"
+            return printer.output("🗑  Removed cache data for script '\(identifier)'")
         }
 
         let package = try packageManager.removePackage(named: identifier)
-        return "🗑  Removed package '\(package.name)'"
+        printer.output("🗑  Removed package '\(package.name)'")
     }
 }
