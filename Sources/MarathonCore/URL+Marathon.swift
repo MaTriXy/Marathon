@@ -46,8 +46,8 @@ internal extension URL {
             return nil
         }
 
-        let parentEndIndex = string.index(string.endIndex, offsetBy: -lastComponent.length)
-        let parentString = string.substring(to: parentEndIndex)
+        let parentEndIndex = string.index(string.endIndex, offsetBy: -lastComponent.count)
+        let parentString = String(string[..<parentEndIndex])
 
         guard parentString != schemeWithSuffix else {
             return nil
@@ -55,26 +55,26 @@ internal extension URL {
 
         return URL(string: parentString).require()
     }
-    
+
     func transformIfNeeded() -> URL {
         guard isGitHubURL else {
             return self
         }
-        
+
         return rawGitHubURL ?? self
     }
-    
+
     private var isGitHubURL: Bool {
         return host == "github.com"
     }
-    
+
     private var rawGitHubURL: URL? {
         let base = "https://raw.githubusercontent.com"
-        
+
         let urlString = pathComponents
             .filter { $0 != "blob" && $0 != "/" }
             .reduce(base) { "\($0)/\($1)" }
-        
+
         return URL(string: urlString)
     }
 }

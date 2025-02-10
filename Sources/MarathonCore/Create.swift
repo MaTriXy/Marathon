@@ -40,8 +40,20 @@ internal final class CreateTask: Task, Executable {
     private typealias Error = CreateError
 
     func execute() throws {
-        guard let path = firstArgumentAsScriptPath else {
+        guard let path = arguments.first?.asScriptPath() else {
             throw Error.missingName
+        }
+
+        guard (try? File(path: path)) == nil else {
+            let editTask = EditTask(
+                folder: folder,
+                arguments: arguments,
+                scriptManager: scriptManager,
+                packageManager: packageManager,
+                printer: printer
+            )
+
+            return try editTask.execute()
         }
 
         guard let data = makeScriptContent().data(using: .utf8) else {
@@ -54,8 +66,9 @@ internal final class CreateTask: Task, Executable {
         printer.output("🐣  Created script at \(path)")
 
         if !argumentsContainNoOpenFlag {
-            let script = try scriptManager.script(at: file.path)
-            try script.edit(arguments: arguments, open: true)
+            let script = try scriptManager.script(atPath: file.path, allowRemote: false)
+            try script.setupForEdit(arguments: arguments)
+            try script.watch(arguments: arguments)
         }
     }
 

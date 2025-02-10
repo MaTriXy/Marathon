@@ -1,3 +1,5 @@
+**⚠️ DEPRECATED**: Marathon is now deprecated in favor of using the Swift Package Manager directly. It's recommended to migrate your scripts as soon as possible, since future Xcode/macOS versions may break compatibility. See [this issue](https://github.com/JohnSundell/Marathon/issues/208) for more info.
+
 <p align="center">
     <img src="Logo.png" width="480" max-width="90%" alt="Marathon" />
 </p>
@@ -5,6 +7,10 @@
 <p align="center">
     <a href="https://dashboard.buddybuild.com/apps/58ff19a79a06210001d14c2d/build/latest?branch=master">
         <img src="https://dashboard.buddybuild.com/api/statusImage?appID=58ff19a79a06210001d14c2d&branch=master&build=latest" />
+    <a href="https://travis-ci.org/JohnSundell/Marathon/branches">
+        <img src="https://img.shields.io/travis/JohnSundell/Marathon/master.svg" alt="Travis status" />
+    </a>
+    <img src="https://img.shields.io/badge/Swift-4.2-orange.svg" />
     </a>
     <a href="https://swift.org/package-manager">
         <img src="https://img.shields.io/badge/spm-compatible-brightgreen.svg?style=flat" alt="Swift Package Manager" />
@@ -31,7 +37,7 @@ $ marathon run helloWorld
 
 📦 Hassle free dependency management. Simply add a package...
 ```
-$ marathon add git@github.com:JohnSundell/Files.git
+$ marathon add https://github.com/JohnSundell/Files.git
 ```
 
 ...and use it without any additional work
@@ -58,6 +64,16 @@ $ marathon edit helloWorld
 $ marathon edit helloWorld --no-xcode
 ```
 
+🌍 Run remote scripts directly from a Git repository...
+```
+$ marathon run https://github.com/johnsundell/testdrive.git
+```
+
+...using only a GitHub username & repository name:
+```
+$ marathon run johnsundell/testdrive
+```
+
 💻 Install scripts as binaries and run them independently from anywhere...
 ```
 $ marathon install helloWorld
@@ -73,35 +89,57 @@ $ addSuffix "@2x"
 > Added suffix "@2x" to 15 files
 ```
 
-👪 Share your scripts with your team and automatically install their dependencies:
+...or from a GitHub repository:
 ```
-$ echo "git@github.com:JohnSundell/Files.git" > Marathonfile
-$ marathon run mySharedScript
+$ marathon install johnsundell/testdrive
+$ testdrive
+```
+
+👪 Share your scripts with your team and automatically install their dependencies...
+```swift
+import Files // marathon:https://github.com/JohnSundell/Files.git
+
+print(Folder.current.path)
+```
+
+...or specify your dependencies using a `Marathonfile`:
+```
+$ echo "https://github.com/JohnSundell/Files.git" > Marathonfile
 ```
 
 ## Installing
 
 ### On macOS
 
-Using Make:
-```
-$ git clone git@github.com:JohnSundell/Marathon.git
+Using Make **(recommended)**:
+```sh
+$ git clone https://github.com/JohnSundell/Marathon.git
 $ cd Marathon
 $ make
 ```
 
 Using the Swift Package Manager:
-```
-$ git clone git@github.com:JohnSundell/Marathon.git
+```sh
+$ git clone https://github.com/JohnSundell/Marathon.git
 $ cd Marathon
 $ swift build -c release -Xswiftc -static-stdlib
 $ cp -f .build/release/Marathon /usr/local/bin/marathon
 ```
 
+Using [Mint](https://github.com/yonaskolb/mint):
+```sh
+$ mint install JohnSundell/Marathon
+```
+
+Using Homebrew **(not recommended, due to slow update cycle)**:
+```sh
+brew install marathon-swift
+```
+
 ### On Linux
 
-```
-$ git clone git@github.com:JohnSundell/Marathon.git
+```sh
+$ git clone https://github.com/JohnSundell/Marathon.git
 $ cd Marathon
 $ swift build -c release
 $ cp -f .build/release/Marathon /usr/local/bin/marathon
@@ -114,7 +152,7 @@ To update Marathon, simply repeat any of the above two series of commands, excep
 
 Marathon requires the following to be installed on your system:
 
-- Swift 3.1 or later (bundled with Xcode 8.3 or later)
+- Swift 4.1 or later (bundled with Xcode 9.3 or later)
 - Git
 - Xcode (if you want to edit scripts using it)
 
@@ -122,23 +160,46 @@ Marathon requires the following to be installed on your system:
 
 Check out [this repository](https://github.com/JohnSundell/Marathon-Examples) for a few example Swift scripts that you can run using Marathon.
 
+## Specifying dependencies inline
+
+Scripting usually involves using 3rd party frameworks to get your job done, and Marathon provides an easy way to define such dependencies right when you are importing them in your script, using a simple comment syntax:
+
+```swift
+import Files // marathon:https://github.com/JohnSundell/Files.git
+import Unbox // marathon:https://github.com/JohnSundell/Unbox.git
+```
+
+Specifying your dependencies ensures that they will always be installed by Marathon before your script is run, edited or installed - making it super easy to share scripts with your friends, team or the wider community. All you have to do is share the script file, and Marathon takes care of the rest!
+
 ## Using a Marathonfile
 
-To easily define dependencies for a script in a declarative way, you can create a `Marathonfile` in the same folder as your script. This file is simply a *new line separated list* of URLs pointing to either:
+If you prefer to keep your dependency declarations separate, you can create a `Marathonfile` in the same folder as your script. This file is simply a *new line separated list* of URLs pointing to either:
 
 - The URL to a git repository of a local or remote package to install before running your script.
 - The path to another script that should be linked to your script before running it.
 
- By using a `Marathonfile` you can ensure that the required dependencies will be installed when sharing your script with team members, friends or the wider community.
-
 Here is an example of a `Marathonfile`:
 ```
-git@github.com:JohnSundell/Files.git
-git@github.com:JohnSundell/Unbox.git
-git@github.com:JohnSundell/Wrap.git
+https://github.com/JohnSundell/Files.git
+https://github.com/JohnSundell/Unbox.git
+https://github.com/JohnSundell/Wrap.git
 ~/packages/MyPackage
 otherScript.swift
 ```
+
+## Shell autocomplete
+
+Marathon includes autocomplete for the `zsh` and `fish` shells (PRs adding support for other shells is more than welcome!). To enable it, do the following:
+
++ `zsh`:
+    - Add the line `fpath=(~/.marathon/ShellAutocomplete/zsh $fpath)` to your `~/.zshrc` file.
+    - Add the line `autoload -Uz compinit && compinit -i` to your `~/.zshrc` file if it doesn't already contain it.
+    - Restart your terminal.
+
++ `fish`:
+    - `cp -f ~/.marathon/ShellAutocomplete/fish/marathon.fish ~/.config/fish/completions`
+
+You can now type `marathon r` and have it be autocompleted to `marathon run` 🎉
 
 ## Help, feedback or suggestions?
 

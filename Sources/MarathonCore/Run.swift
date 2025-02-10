@@ -20,7 +20,7 @@ extension RunError: PrintableError {
         switch self {
         case .missingPath:
             return "No script path given"
-        case .failedToRunScript(_):
+        case .failedToRunScript:
             return "Failed to run script"
         }
     }
@@ -43,11 +43,11 @@ internal class RunTask: Task, Executable {
     // MARK: - Executable
 
     func execute() throws {
-        guard let path = firstArgumentAsScriptPath else {
+        guard let path = arguments.first else {
             throw Error.missingPath
         }
 
-        let script = try scriptManager.script(at: path)
+        let script = try scriptManager.script(atPath: path, allowRemote: true)
         try script.build()
 
         do {

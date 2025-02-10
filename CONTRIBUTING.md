@@ -18,7 +18,7 @@ You can help us reach that goal by contributing. Here are some ways you can cont
 
 ## Code of conduct
 
-All contributors are expected to follow our [Code of conduct](CONDUCT.md).
+All contributors are expected to follow our [Code of conduct](CODE_OF_CONDUCT.md).
 Please read it before making any contributions.
 
 ## Setting up the project for development
@@ -31,11 +31,47 @@ To generate an Xcode project to begin development, run `$ swift package generate
 
 It's recommended that you re-generate the Xcode project whenever you pull down new changes, as files might've been added or removed.
 
-## Running tests
+Marathon uses [SwiftLint](https://github.com/realm/SwiftLint) to enforce Swift style and conventions. The easiest way to install SwiftLint is using [Homebrew](https://brew.sh/):
+
+```bash
+brew install swiftlint
+```
+
+Make sure there are no linting warnings or errors by running `$ swiftlint` in the Marathon repository before submitting your changes. You can integrate SwiftLint into your generated Xcode project to get warnings and errors displayed inline in the editor, by adding the following as a new "Run Script Phase":
+
+```bash
+if which swiftlint >/dev/null; then
+  swiftlint
+else
+  echo "warning: SwiftLint not installed, download from https://github.com/realm/SwiftLint"
+fi
+```
+
+Unfortunately, you have to add it again if you re-generate the Xcode project for now, so it's recommended to use `$ swiftlint` in the Marathon repository.
+
+## Testing
+
+### Running tests
 
 Tests should be added for all functionality, both when adding new behaviors to existing features, and implementing new ones.
 
 Marathon uses `XCTest` to run its tests, which can either be run through Xcode or by running `$ swift test` in the repository.
+
+### Writing tests
+
+Marathon is available both on macOS and Linux. For that reason there are two CI systems running simultaneously:
++ [BuddyBuild](https://buddybuild.com) for macOS
++ [Travis](https://travis-ci.org) for Linux
+
+Platform specific tests are run on each respective CI and results from both are integrated into every PR. If one fails, you can easily determine which platform the tests failed on.
+
+Marathon realies heavily on the file system to do its work. For that reason there are some convenience methods available in test suite which may help you achieve things easily and will keep an eye on what's happening in test suite. Here are some tips for writing new test cases:
+
++ Be sure to prefix tests with `test` eg. `testAllTestsRunOnLinux`.
++ If the test is macOS specific, be sure to add `MacOS` in the function's signature, eg. `testEditingScriptWithXcodeOnMacOS`.
++ After writing a new test function, make sure you've added it to the `allTests` array, otherwise you'll get an error.
++ Since we run tests on CI, if you want to reference the main `~/.marathon` folder in a test, plese use property named `folder` since a special folder is created for each test run.
++ Make sure each test runs Marathon, otherwise it hasn't been installed and isn't present. To do this, simply use the `run(with:)` method, which is a convenience wrapper. You just pass and array of arguments and you're good to go.
 
 ## Architectural overview
 

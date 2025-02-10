@@ -16,6 +16,7 @@ import Require
 
 public enum ScriptError {
     case editingFailed(String)
+    case watchingFailed(String)
     case buildFailed([String], missingPackage: String?)
     case installFailed(String)
 }
@@ -25,17 +26,21 @@ extension ScriptError: PrintableError {
         switch self {
         case .editingFailed(let name):
             return "Failed to open script '\(name)' for editing"
-        case .buildFailed(_, _):
+        case .buildFailed:
             return "Failed to compile script"
-        case .installFailed(_):
+        case .installFailed:
             return "Failed to install script"
+        case .watchingFailed(let name):
+            return "Failed to start watcher for \(name)"
         }
     }
 
     public var hints: [String] {
         switch self {
-        case .editingFailed(_):
+        case .editingFailed:
             return ["Make sure that it exists and that its file is readable"]
+        case .watchingFailed:
+            return ["Check the error message for more information"]
         case .buildFailed(let errors, let missingPackage):
             guard !errors.isEmpty else {
                 return []
@@ -57,16 +62,17 @@ extension ScriptError: PrintableError {
 
 // MARK: - Script
 
-internal final class Script {
+public final class Script {
     private typealias Error = ScriptError
 
     // MARK: - Properties
 
-    let name: String
-    let folder: Folder
+    public let name: String
+    public let folder: Folder
 
     private let printer: Printer
     private var copyLoopDispatchQueue: DispatchQueue?
+    private var localPath: String { return "Sources/\(name)/main.swift"  }
 
     // MARK: - Init
 
@@ -78,22 +84,27 @@ internal final class Script {
 
     // MARK: - API
 
-    func build(withArguments arguments: [String] = []) throws {
+    public func build(withArguments arguments: [String] = []) throws {
         do {
-            let command = "swift build --enable-prefetching " + arguments.joined(separator: " ")
-            try folder.moveToAndPerform(command: command, printer: printer)
+            let command = "build -C \(folder.path) " + arguments.joined(separator: " ")
+            try shellOutToSwiftCommand(command, in: folder, printer: printer)
         } catch {
             throw formatBuildError(error as! ShellOutError)
         }
     }
 
-    func run(in executionFolder: Folder, with arguments: [String]) throws -> String {
+    public func run(in executionFolder: Folder, with arguments: [String]) throws -> String {
         let scriptPath = folder.path + ".build/debug/" + name
-        let command = scriptPath + " " + arguments.joined(separator: " ")
+        var command = scriptPath
+
+        if !arguments.isEmpty {
+            command += " \"" + arguments.joined(separator: "\" \"") + "\""
+        }
+
         return try executionFolder.moveToAndPerform(command: command, printer: printer)
     }
 
-    func install(at path: String, confirmBeforeOverwriting: Bool) throws -> Bool {
+    public func install(at path: String, confirmBeforeOverwriting: Bool) throws -> Bool {
         do {
             var pathComponents = path.components(separatedBy: "/")
             let installName = pathComponents.removeLast()
@@ -122,38 +133,49 @@ internal final class Script {
         }
     }
 
-    func edit(arguments: [String], open: Bool) throws {
+    @discardableResult
+    public func setupForEdit(arguments: [String]) throws -> String {
         do {
-            let path = try editingPath(from: arguments)
-
-            if open {
-                let relativePath = path.replacingOccurrences(of: folder.path, with: "")
-                printer.output("✏️  Opening \(relativePath)")
-
-                try shellOut(to: "open \"\(path)\"", printer: printer)
-
-                if path.hasSuffix(".xcodeproj/") {
-                    printer.output("\nℹ️  Marathon will keep running, in order to commit any changes you make in Xcode back to the original script file")
-                    printer.output("   Press the return key once you're done")
-
-                    startCopyLoop()
-                    _ = FileHandle.standardInput.availableData
-                    try copyChangesToSymlinkedFile()
-                }
+            if !arguments.contains("--no-xcode") {
+                try generateXcodeProject()
             }
+
+            return try editingPath(from: arguments)
         } catch {
             throw Error.editingFailed(name)
         }
     }
 
-    func resolveMarathonFile() throws -> MarathonFile? {
+    public func watch(arguments: [String]) throws {
+        do {
+            let path = try editingPath(from: arguments)
+            let relativePath = path.replacingOccurrences(of: folder.path, with: "")
+            printer.output("✏️  Opening \(relativePath)")
+
+            try shellOut(to: "open \"\(path)\"", printer: printer)
+
+            if path.hasSuffix(".xcodeproj/") {
+                printer.output("\nℹ️  Marathon will keep running, in order to commit any changes you make in Xcode back to the original script file")
+                printer.output("   Press the return key once you're done")
+
+                startCopyLoop()
+                _ = FileHandle.standardInput.availableData
+                try copyChangesToSymlinkedFile()
+
+            }
+        } catch {
+            throw Error.watchingFailed(name)
+        }
+    }
+
+    func resolveMarathonFile(fileName: String) throws -> MarathonFile? {
         let scriptFile = try File(path: expandSymlink())
 
         guard let parentFolder = scriptFile.parent else {
             return nil
         }
 
-        guard let file = try? parentFolder.file(named: "Marathonfile") else {
+        guard let file = try? parentFolder.file(named: fileName) else {
             return nil
         }
 
@@ -167,12 +189,11 @@ internal final class Script {
             return try expandSymlink()
         }
 
-        return try generateXcodeProject().path
+        return try folder.subfolder(named: name + ".xcodeproj").path
     }
 
-    private func generateXcodeProject() throws -> Folder {
-        try folder.moveToAndPerform(command: "swift package generate-xcodeproj", printer: printer)
-        return try folder.subfolder(named: name + ".xcodeproj")
+    private func generateXcodeProject() throws {
+        try shellOutToSwiftCommand("package generate-xcodeproj", in: folder, printer: printer)
     }
 
     private func expandSymlink() throws -> String {
@@ -197,7 +218,7 @@ internal final class Script {
     }
 
     private func copyChangesToSymlinkedFile() throws {
-        let data = try folder.file(atPath: "Sources/main.swift").read()
+        let data = try folder.file(atPath: localPath).read()
         try File(path: expandSymlink()).write(data: data)
     }
 
@@ -205,7 +226,7 @@ internal final class Script {
         var messages = [String]()
 
         for outputComponent in error.output.components(separatedBy: "\n") {
-            let lineComponents = outputComponent.components(separatedBy: folder.path + "Sources/main.swift:")
+            let lineComponents = outputComponent.components(separatedBy: folder.path + "\(localPath):")
 
             guard lineComponents.count > 1 else {
                 continue
@@ -215,7 +236,7 @@ internal final class Script {
             messages.append(message)
 
             if let range = message.range(of: "'[A-Za-z]+'", options: .regularExpression), message.contains("no such module") {
-                let missingPackage = message[range].replacingOccurrences(of: "'", with: "")
+                let missingPackage = String(message[range]).replacingOccurrences(of: "'", with: "")
                 return Error.buildFailed(messages, missingPackage: missingPackage)
             }
         }

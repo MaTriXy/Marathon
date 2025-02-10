@@ -7,7 +7,7 @@
 import Foundation
 import Files
 
-internal class Task {
+public class Task {
     let folder: Folder
     let arguments: [String]
     let scriptManager: ScriptManager
@@ -28,18 +28,6 @@ internal class Task {
 }
 
 extension Task {
-    var firstArgumentAsScriptPath: String? {
-        guard let argument = arguments.first else {
-            return nil
-        }
-
-        guard argument.hasSuffix(".swift") else {
-            return argument + ".swift"
-        }
-
-        return argument
-    }
-
     var argumentsContainNoOpenFlag: Bool {
         return arguments.contains("--no-open")
     }

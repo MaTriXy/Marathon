@@ -13,14 +13,14 @@ public typealias VerbosePrintFunction = (@autoclosure () -> String) -> Void
 
 // MARK: - Printer
 
-internal class Printer {
+public class Printer {
     let output: PrintFunction
     let reportProgress: VerbosePrintFunction
     let verboseOutput: VerbosePrintFunction
 
-    init(outputFunction: @escaping PrintFunction,
-         progressFunction: @escaping VerbosePrintFunction,
-         verboseFunction: @escaping VerbosePrintFunction) {
+    public init(outputFunction: @escaping PrintFunction,
+                progressFunction: @escaping VerbosePrintFunction,
+                verboseFunction: @escaping VerbosePrintFunction) {
         output = outputFunction
         reportProgress = progressFunction
         verboseOutput = verboseFunction

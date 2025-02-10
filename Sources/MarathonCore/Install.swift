@@ -34,19 +34,15 @@ internal class InstallTask: Task, Executable {
     private typealias Error = InstallError
 
     func execute() throws {
-        guard let path = firstArgumentAsScriptPath else {
+        guard let path = arguments.first else {
             throw Error.missingPath
         }
 
-        let script = try loadScript(from: path)
+        let script = try scriptManager.script(atPath: path, allowRemote: true)
         let installPath = makeInstallPath(for: script)
 
         printer.reportProgress("Compiling script...")
-        #if os(Linux)
-            try script.build(withArguments: ["-c", "release"])
-        #else
-            try script.build(withArguments: ["-c", "release", "-Xswiftc", "-static-stdlib"])
-        #endif
+        try script.build(withArguments: ["-c", "release"])
         printer.reportProgress("Installing binary...")
         let installed = try script.install(at: installPath, confirmBeforeOverwriting: !arguments.contains("--force"))
 
@@ -57,21 +53,9 @@ internal class InstallTask: Task, Executable {
         printer.output("💻  \(path) installed at \(installPath)")
     }
 
-    private func loadScript(from path: String) throws -> Script {
-        if let url = URL(string: path) {
-            if let urlScheme = url.scheme {
-                if urlScheme.hasPrefix("http") {
-                    return try scriptManager.downloadScript(from: url)
-                }
-            }
-        }
-
-        return try scriptManager.script(at: path)
-    }
-
     private func makeInstallPath(for script: Script) -> String {
         if let argument = arguments.element(at: 1) {
-            if argument != "--force" {
+            if argument != "--force" && argument != "--verbose" {
                 return argument
             }
         }
